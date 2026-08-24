@@ -1,0 +1,32 @@
+.pio/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# Секреты и конфигурации
+Project\ D/src/config.h
+Project\ D-tgbot/config.py
+*.key
+*.pem
+
+# ОС
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

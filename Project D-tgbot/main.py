@@ -10,6 +10,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 
 from config import TOKEN
+from qwen_client import ask_qwen
 
 # Ходим через наше реле — VPN не нужен
 server = TelegramAPIServer.from_base("https://helloesp32.ksushat75.workers.dev/")
@@ -34,6 +35,7 @@ def save_deadlines():
         json.dump(DEADLINES, f, ensure_ascii=False, indent=2)
 
 DEADLINES = load_deadlines()
+CHAT_HISTORY = {}  # память диалогов с нейросетью
 
 def parse_time(s):
     """Понимает 24-часовой формат: '18:05', '8:05', '18.05'"""
@@ -44,7 +46,27 @@ def parse_time(s):
     if h > 23 or mi > 59:
         return None
     return f"{h:02d}:{mi:02d}"   # приводим к '08:05' — так сортируется правильно
+def parse_date(s):
+    try:
+        return datetime.strptime((s or "").strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except Exception:
+        return None
 
+
+def deadlines_text(chat_id):
+    my = sorted(
+        (d for d in DEADLINES if d["chat"] == chat_id),
+        key=lambda d: (d.get("date") or "", d["time"])
+    )
+    if not my:
+        return "Пока пусто. Скажи просто: «запиши, что завтра в 10:00 сдать лабу»"
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines = []
+    for i, d in enumerate(my):
+        when = "сегодня" if (d.get("date") or today) == today else d.get("date", "")
+        lines.append(f"{i + 1}. ⏰ {when} {d['time']} — {d['text']}")
+    return "Твои дедлайны:\n" + "\n".join(lines)
 @router.message(CommandStart())
 async def start(m: types.Message):
     await m.answer(
@@ -71,25 +93,27 @@ async def set_deadline(m: types.Message):
 
 @router.message(Command("deadline"))
 async def show_deadlines(m: types.Message):
-    my = sorted((d for d in DEADLINES if d["chat"] == m.chat.id), key=lambda d: d["time"])
-    if not my:
-        await m.answer("Пока пусто. Добавь: /set_deadline 18:00 сдать лабу")
-        return
-    lines = [f"{i + 1}. ⏰ {d['time']} — {d['text']}" for i, d in enumerate(my)]
-    await m.answer("Твои дедлайны:\n" + "\n".join(lines))
+    await m.answer(deadlines_text(m.chat.id))
 
 async def reminder_loop():
     while True:
-        now = datetime.now().strftime("%H:%M")
+        now = datetime.now()
+        now_date = now.strftime("%Y-%m-%d")
+        now_time = now.strftime("%H:%M")
         fired = False
+
         for d in list(DEADLINES):
-            if d["time"] == now:
+            time_match = d["time"] == now_time
+            date_ok = (d.get("date") is None) or (d.get("date") == now_date)
+
+            if time_match and date_ok:
                 try:
                     await bot.send_message(d["chat"], f"🔥 Дедлайн: {d['text']}! Дракошка верит в тебя 🐉")
                 except Exception as e:
                     print("Ошибка напоминания:", e)
                 DEADLINES.remove(d)
                 fired = True
+
         if fired:
             save_deadlines()
         await asyncio.sleep(15)
@@ -108,14 +132,61 @@ async def push_cmd(cmd: str):
 
 @router.message(F.text)
 async def free_text(m: types.Message):
-    t = m.text.lower()
+    t = (m.text or "").lower()
+
     if "посвети" in t:
         await push_cmd("light_on")
         await m.answer("Свечусь!")
-    elif "погасни" in t:
+        return
+
+    if "погасни" in t:
         await push_cmd("light_off")
         await m.answer("Гасну")
+        return
 
+    history = CHAT_HISTORY.get(m.chat.id, [])[-10:]
+    history.append({"role": "user", "content": m.text})
+
+    result = await ask_qwen(history)
+    replies = []
+
+    for call in result["tool_calls"]:
+        fname = call.get("function", {}).get("name")
+        try:
+            args = json.loads(call.get("function", {}).get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+
+        if fname == "add_deadline":
+            date = parse_date(args.get("date")) or datetime.now().strftime("%Y-%m-%d")
+            time_ = parse_time(args.get("time") or "") or "23:59"
+            title = (args.get("title") or "задача").strip()
+            diff = args.get("difficulty")
+
+            DEADLINES.append({
+                "chat": m.chat.id,
+                "date": date,
+                "time": time_,
+                "text": title,
+                "difficulty": diff,
+            })
+            DEADLINES.sort(key=lambda d: (d.get("date") or "", d["time"]))
+            save_deadlines()
+
+            pretty = "сегодня" if date == datetime.now().strftime("%Y-%m-%d") else date
+            extra = f", сложность {diff}/5" if diff else ""
+            replies.append(f"Записал! Напомню {pretty} в {time_}: «{title}»{extra} ⏰")
+
+        elif fname == "list_tasks":
+            replies.append(deadlines_text(m.chat.id))
+
+    if result["text"]:
+        replies.append(result["text"])
+
+    history.append({"role": "assistant", "content": result["text"] or "\n".join(replies)})
+    CHAT_HISTORY[m.chat.id] = history
+
+    await m.answer(("\n".join(replies) or "Понял!")[:4096])
 async def main():
     dp.include_router(router)
     asyncio.create_task(reminder_loop())

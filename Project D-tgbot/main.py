@@ -134,14 +134,35 @@ async def push_cmd(cmd: str):
 async def free_text(m: types.Message):
     t = (m.text or "").lower()
 
-    if "посвети" in t:
-        await push_cmd("light_on")
-        await m.answer("Свечусь!")
+    # ===== НОВЫЕ КОМАНДЫ НАСТРОЕНИЯ =====
+    if "посвети" in t or "радость" in t or "весело" in t or "joy" in t:
+        await push_cmd("light_joy")
+        await m.answer("Свечусь радостью! 🟠🐉")
         return
 
-    if "погасни" in t:
+    if "погасни" in t or "выключи" in t or "off" in t:
         await push_cmd("light_off")
-        await m.answer("Гасну")
+        await m.answer("Гасну... 🌑")
+        return
+
+    if "спокой" in t or "тихо" in t or "calm" in t or "расслаб" in t:
+        await push_cmd("light_calm")
+        await m.answer("Спокойствие и гармония 🔵")
+        return
+
+    if "поддерж" in t or "обним" in t or "груст" in t or "support" in t:
+        await push_cmd("light_support")
+        await m.answer("Обнимаю тебя! 💚🐉")
+        return
+
+    if "дедлайн" in t or "тревог" in t or "panic" in t or "alarm" in t or "срочн" in t:
+        await push_cmd("light_alarm")
+        await m.answer("Внимание! Режим тревоги! 🔴")
+        return
+
+    if "сон" in t or "спать" in t or "sleep" in t or "ночь" in t:
+        await push_cmd("light_sleep")
+        await m.answer("Спокойной ночи... 💜")
         return
 
     history = CHAT_HISTORY.get(m.chat.id, [])[-10:]

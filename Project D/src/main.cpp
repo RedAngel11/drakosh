@@ -127,11 +127,19 @@ void loop() {
         
         String cmd = relayGet("/box/pop");
         if (cmd.length() > 0 && cmd != "empty") {
-            Serial.println("📨 Из Telegram: " + cmd);
-            commandHandler.handleCommand(cmd);
-        }
+        Serial.println("📨 из TG: " + cmd);
+        
+        if (cmd.indexOf("light_joy") >= 0)    light.setEmotion(Emotion::JOY);
+        else if (cmd.indexOf("light_off") >= 0)    light.setEmotion(Emotion::OFF);
+        else if (cmd.indexOf("light_calm") >= 0)   light.setEmotion(Emotion::CALM);
+        else if (cmd.indexOf("light_support") >= 0) light.setEmotion(Emotion::SUPPORT);
+        else if (cmd.indexOf("light_alarm") >= 0)  light.setEmotion(Emotion::ALARM);
+        else if (cmd.indexOf("light_sleep") >= 0)  light.setEmotion(Emotion::SLEEP);
+    }
     }
     
+    
+
     // 5. Обработка команд из Serial
     commandHandler.handleSerialCommand();
     

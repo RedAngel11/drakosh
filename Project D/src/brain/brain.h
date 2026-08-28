@@ -3,13 +3,23 @@
 #include "../drivers/servo_controller.h"
 #include "../light_engine.h"
 
+// ===== ВАЖНО: enum должен быть ОБЪЯВЛЕН ДО класса Brain =====
+enum class BrainMode { 
+    CALM, 
+    JOY, 
+    SUPPORT, 
+    ALARM, 
+    SLEEP, 
+    OFF 
+};
+
 class Brain {
 public:
     void begin(ServoController* servo, LightEngine* light) {
         _servo = servo;
         _light = light;
         _lastActivity = millis();
-        Serial.println(" Мозг Дракошки активирован");
+        Serial.println("🧠 Мозг Дракошки активирован");
     }
 
     void update() {
@@ -36,7 +46,7 @@ public:
                 break;
                 
             case BrainMode::CALM:
-                Serial.println("😌 Режим: спокойствие");
+                Serial.println(" Режим: спокойствие");
                 if (_light) _light->setEmotion(Emotion::CALM);
                 break;
                 
@@ -76,13 +86,4 @@ private:
     LightEngine* _light = nullptr;
     BrainMode _currentMode = BrainMode::CALM;
     unsigned long _lastActivity = 0;
-};
-
-enum class BrainMode { 
-    CALM, 
-    JOY, 
-    SUPPORT, 
-    ALARM, 
-    SLEEP, 
-    OFF 
 };

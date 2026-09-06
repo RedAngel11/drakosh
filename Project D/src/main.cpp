@@ -1,97 +1,130 @@
 #include <Arduino.h>
-#include <Adafruit_NeoPixel.h>
-#include "config.h"
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+#include "config.h" 
 
-// ===== Настройки ленты =====
-#define NUM_LEDS 60  // Количество диодов в ленте
-#define BRIGHTNESS 50  // Яркость 0-255 (50 = ~20%, безопасно для питания)
+// в этот раз мы отлаживаем движение сервопривода, поэтому код для ленты убран
+// ===== PCA9685 и Сервоприводы =====
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
-Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
+#define I2C_SDA 8  
+#define I2C_SCL 9  
 
-// ===== Состояние =====
-bool ledOn = false;
+#define SERVOMIN  150 
+#define SERVOMAX  600 
+#define SERVO_FREQ 50 
+#define SERVO_CHANNEL 0 
 
-// ===== Цвета =====
-struct RGB { uint8_t r, g, b; };
+uint16_t degreesToPulse(int degrees) {
+    return map(degrees, 0, 180, SERVOMIN, SERVOMAX);
+}
 
-RGB colors[] = {
-    {255, 100, 0},    // Оранжевый
-    {0, 255, 100},    // Зелёный
-    {0, 100, 255},    // Синий
-    {255, 0, 100},    // Розовый
-    {100, 0, 255},    // Фиолетовый
+// ===== Настройки плавности =====
+const long MOVE_INTERVAL = 15;  // Задержка в мс между шагами в 1 градус. 
+                                // (Меньше значение = быстрее движение. 15мс ~ 66 град/сек)
+const long PAUSE_INTERVAL = 1000; // Пауза в мс в конечной точке перед следующим движением
+
+// ===== Конечный автомат (State Machine) =====
+enum SequenceState {
+    SEQ_IDLE,         // Ждем кнопки
+    SEQ_MOVE_TO_135,  // Двигаемся к 135°
+    SEQ_MOVE_TO_45,   // Двигаемся к 45°
+    SEQ_MOVE_TO_90    // Возвращаемся в 90°
 };
-const int NUM_COLORS = sizeof(colors) / sizeof(colors[0]);
-int currentColor = 0;
 
-// ===== Функции =====
-void setAllPixels(RGB color) {
-    uint32_t c = strip.Color(color.r, color.g, color.b);
-    for (int i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, c);
-    }
-    strip.show();
-}
+SequenceState currentSeq = SEQ_IDLE;
 
-void turnOn() {
-    ledOn = true;
-    Serial.println("💡 ЛЕНТА ВКЛЮЧЕНА (цвет " + String(currentColor) + ")");
-    setAllPixels(colors[currentColor]);
-}
+// Переменные для плавного движения
+int currentAngle = 90;  // Текущий физический угол сервы
+int targetAngle = 90;   // Целевой угол
 
-void turnOff() {
-    ledOn = false;
-    Serial.println("🌑 ЛЕНТА ВЫКЛЮЧЕНА");
-    setAllPixels({0, 0, 0});
-}
+// Таймеры (неблокирующие)
+unsigned long lastMoveMillis = 0;
+unsigned long lastPauseMillis = 0;
 
 // ===== SETUP =====
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    
-    Serial.println("\n=== Тест кнопки и ленты ===");
-    Serial.println("Лента: пин " + String(PIN_LED_STRIP));
-    Serial.println("Кнопка: пин " + String(PIN_BUTTON));
-    
-    // Инициализация ленты
-    strip.begin();
-    strip.setBrightness(BRIGHTNESS);
-    strip.show();  // Все выключены
-    
-    // Инициализация кнопки
-    pinMode(PIN_BUTTON, INPUT_PULLUP);  // Внутренняя подтяжка к HIGH
-    
-    Serial.println("Готово! Нажми кнопку BOOT на плате.");
+    Serial.println("\n=== Дракошка: Плавный тест сервопривода ===");
+
+    pinMode(PIN_BUTTON, INPUT_PULLUP);  
+
+    Wire.begin(I2C_SDA, I2C_SCL);
+    pwm.begin();
+    pwm.setOscillatorFrequency(27000000);
+    pwm.setPWMFreq(SERVO_FREQ);
+    delay(10);
+
+    // Инициализация начального положения
+    pwm.setPWM(SERVO_CHANNEL, 0, degreesToPulse(currentAngle));
+    Serial.println("Серва в центре (90°). Нажмите кнопку BOOT для запуска плавного цикла!");
 }
 
 // ===== LOOP =====
 void loop() {
-    // Читаем кнопку (нажатие = LOW, потому что INPUT_PULLUP)
-    bool buttonPressed = (digitalRead(PIN_BUTTON) == LOW);
-    
-    if (buttonPressed) {
-        delay(50);  // Антидребезг (debounce)
-        
-        // Проверяем ещё раз (настоящее нажатие)
+    // 1. Обработка нажатия кнопки
+    if (digitalRead(PIN_BUTTON) == LOW) {
+        delay(50); // Антидребезг
         if (digitalRead(PIN_BUTTON) == LOW) {
-            if (ledOn) {
-                // Если включена — выключаем И меняем цвет для следующего раза
-                turnOff();
-                currentColor = (currentColor + 1) % NUM_COLORS;
-                Serial.println("   Следующий цвет: " + String(currentColor));
-            } else {
-                // Если выключена — включаем
-                turnOn();
+            if (currentSeq == SEQ_IDLE) {
+                currentSeq = SEQ_MOVE_TO_135;
+                targetAngle = 135;
+                lastPauseMillis = millis(); // Сбрасываем таймер паузы
+                Serial.println("🚀 Начало цикла: цель 135°");
             }
-            
-            // Ждём отпускания кнопки
-            while (digitalRead(PIN_BUTTON) == LOW) {
-                delay(10);
+            while (digitalRead(PIN_BUTTON) == LOW) delay(10); // Ждем отпускания
+        }
+    }
+
+    // 2. Логика движения и пауз
+    if (currentSeq != SEQ_IDLE) {
+        
+        // --- ФАЗА А: Движение к цели ---
+        if (currentAngle != targetAngle) {
+            if (millis() - lastMoveMillis >= MOVE_INTERVAL) {
+                lastMoveMillis = millis();
+                
+                // Сдвигаем угол на 1 градус в сторону цели
+                if (currentAngle < targetAngle) {
+                    currentAngle++;
+                } else {
+                    currentAngle--;
+                }
+                
+                // Отправляем новый угол на драйвер
+                pwm.setPWM(SERVO_CHANNEL, 0, degreesToPulse(currentAngle));
             }
-            delay(200);  // Пауза после отпускания
+        } 
+        // --- ФАЗА Б: Достижение цели и пауза ---
+        else {
+            // Мы достигли targetAngle! Ждем PAUSE_INTERVAL, чтобы пойти дальше.
+            if (millis() - lastPauseMillis >= PAUSE_INTERVAL) {
+                lastPauseMillis = millis(); // Сбрасываем таймер для следующей паузы
+                
+                // Переключаем состояние на следующее
+                switch (currentSeq) {
+                    case SEQ_MOVE_TO_135:
+                        currentSeq = SEQ_MOVE_TO_45;
+                        targetAngle = 45;
+                        Serial.println("🎯 Достигнуто 135°. Цель: 45°");
+                        break;
+                        
+                    case SEQ_MOVE_TO_45:
+                        currentSeq = SEQ_MOVE_TO_90;
+                        targetAngle = 90;
+                        Serial.println("🎯 Достигнуто 45°. Цель: 90°");
+                        break;
+                        
+                    case SEQ_MOVE_TO_90:
+                        currentSeq = SEQ_IDLE;
+                        Serial.println("🎯 Достигнуто 90°. Цикл завершен!\n");
+                        break;
+                }
+            }
         }
     }
     
-    delay(10);
+    // Небольшая задержка для разгрузки watchdog и Wi-Fi стека ESP32
+    delay(1); 
 }

@@ -123,6 +123,9 @@ from aiogram import F
 
 RELAY = "https://helloesp32.ksushat75.workers.dev"
 
+
+# ... (начало файла без изменений, импорт, загрузка DEADLINES и т.д.)
+
 async def push_cmd(cmd: str):
     try:
         async with aiohttp.ClientSession() as s:
@@ -130,41 +133,9 @@ async def push_cmd(cmd: str):
     except Exception as e:
         print("Не удалось отправить команду роботу:", e)
 
+
 @router.message(F.text)
 async def free_text(m: types.Message):
-    t = (m.text or "").lower()
-
-    # ===== НОВЫЕ КОМАНДЫ НАСТРОЕНИЯ =====
-    if "посвети" in t or "радость" in t or "весело" in t or "joy" in t:
-        await push_cmd("light_joy")
-        await m.answer("Свечусь радостью! 🟠🐉")
-        return
-
-    if "погасни" in t or "выключи" in t or "off" in t:
-        await push_cmd("light_off")
-        await m.answer("Гасну... 🌑")
-        return
-
-    if "спокой" in t or "тихо" in t or "calm" in t or "расслаб" in t:
-        await push_cmd("light_calm")
-        await m.answer("Спокойствие и гармония 🔵")
-        return
-
-    if "поддерж" in t or "обним" in t or "груст" in t or "support" in t:
-        await push_cmd("light_support")
-        await m.answer("Обнимаю тебя! 💚🐉")
-        return
-
-    if "дедлайн" in t or "тревог" in t or "panic" in t or "alarm" in t or "срочн" in t:
-        await push_cmd("light_alarm")
-        await m.answer("Внимание! Режим тревоги! 🔴")
-        return
-
-    if "сон" in t or "спать" in t or "sleep" in t or "ночь" in t:
-        await push_cmd("light_sleep")
-        await m.answer("Спокойной ночи... 💜")
-        return
-
     history = CHAT_HISTORY.get(m.chat.id, [])[-10:]
     history.append({"role": "user", "content": m.text})
 
@@ -178,22 +149,15 @@ async def free_text(m: types.Message):
         except json.JSONDecodeError:
             args = {}
 
+        # 1. Обработка дедлайнов (как было)
         if fname == "add_deadline":
             date = parse_date(args.get("date")) or datetime.now().strftime("%Y-%m-%d")
             time_ = parse_time(args.get("time") or "") or "23:59"
             title = (args.get("title") or "задача").strip()
             diff = args.get("difficulty")
-
-            DEADLINES.append({
-                "chat": m.chat.id,
-                "date": date,
-                "time": time_,
-                "text": title,
-                "difficulty": diff,
-            })
+            DEADLINES.append({"chat": m.chat.id, "date": date, "time": time_, "text": title, "difficulty": diff})
             DEADLINES.sort(key=lambda d: (d.get("date") or "", d["time"]))
             save_deadlines()
-
             pretty = "сегодня" if date == datetime.now().strftime("%Y-%m-%d") else date
             extra = f", сложность {diff}/5" if diff else ""
             replies.append(f"Записал! Напомню {pretty} в {time_}: «{title}»{extra} ⏰")
@@ -201,13 +165,40 @@ async def free_text(m: types.Message):
         elif fname == "list_tasks":
             replies.append(deadlines_text(m.chat.id))
 
+        # 2. НОВОЕ: Обработка эмоций робота
+        elif fname == "set_emotion":
+            emotion = args.get("emotion", "calm")
+            await push_cmd(f"light_{emotion}")
+
+            emotion_emojis = {
+                "joy": "Свечусь радостью! 🟠🐉",
+                "calm": "Спокойствие и гармония 🔵",
+                "support": "Обнимаю тебя! Я рядом 💚🐉",
+                "alarm": "Внимание! Режим тревоги! 🔴",
+                "sleep": "Спокойной ночи... гашу свет 💜",
+                "off": "Гасну... 🌑"
+            }
+            replies.append(emotion_emojis.get(emotion, "Принято!"))
+
+        # 3. НОВОЕ: Обработка движений
+        elif fname == "move_servos":
+            action = args.get("action", "center")
+            await push_cmd(action)
+            if action == "wave_wings":
+                replies.append("Машу крыльями! 🦖")
+            else:
+                replies.append("Вернулся в исходное положение 🧍‍♂️")
+
+    # Добавляем текстовый ответ от нейросети (если он есть)
     if result["text"]:
         replies.append(result["text"])
 
+    # Сохраняем историю
     history.append({"role": "assistant", "content": result["text"] or "\n".join(replies)})
     CHAT_HISTORY[m.chat.id] = history
 
     await m.answer(("\n".join(replies) or "Понял!")[:4096])
+
 async def main():
     dp.include_router(router)
     asyncio.create_task(reminder_loop())

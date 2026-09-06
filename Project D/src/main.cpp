@@ -1,147 +1,97 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <WiFiManager.h>
-
+#include <Adafruit_NeoPixel.h>
 #include "config.h"
-#include "light_engine.h"
-#include "drivers/servo_controller.h"
-#include "brain/brain.h"
-#include "commands/command_handler.h"
 
-// ===== Глобальные объекты =====
-LightEngine light;
-ServoController servo;
-Brain brain;
-CommandHandler commandHandler;
+// ===== Настройки ленты =====
+#define NUM_LEDS 60  // Количество диодов в ленте
+#define BRIGHTNESS 50  // Яркость 0-255 (50 = ~20%, безопасно для питания)
 
-WiFiClientSecure client;
+Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
 
 // ===== Состояние =====
-bool wifiOk = false;
-unsigned long lastReconnect = 0;
-unsigned long lastBoxCheck = 0;
+bool ledOn = false;
 
-// ===== Relay функции =====
-String relayGet(const String& path) {
-    if (!client.connect(RELAY_HOST, RELAY_PORT)) {
-        return "";
+// ===== Цвета =====
+struct RGB { uint8_t r, g, b; };
+
+RGB colors[] = {
+    {255, 100, 0},    // Оранжевый
+    {0, 255, 100},    // Зелёный
+    {0, 100, 255},    // Синий
+    {255, 0, 100},    // Розовый
+    {100, 0, 255},    // Фиолетовый
+};
+const int NUM_COLORS = sizeof(colors) / sizeof(colors[0]);
+int currentColor = 0;
+
+// ===== Функции =====
+void setAllPixels(RGB color) {
+    uint32_t c = strip.Color(color.r, color.g, color.b);
+    for (int i = 0; i < NUM_LEDS; i++) {
+        strip.setPixelColor(i, c);
     }
-    
-    client.print("GET " + path + " HTTP/1.1\r\n");
-    client.print("Host: " + String(RELAY_HOST) + "\r\n");
-    client.print("Connection: close\r\n");
-    client.print("\r\n");
-    
-    String raw = "";
-    unsigned long startTime = millis();
-    unsigned long lastRx = millis();
-    
-    while (millis() - startTime < 5000) {
-        light.update(); // Свет живёт даже во время запроса
-        
-        if (client.available()) {
-            raw += (char)client.read();
-            lastRx = millis();
-        } else if (millis() - lastRx > 400) {
-            break; // 400 мс тишины — ответ получен
-        }
-        delay(2);
-    }
-    
-    client.stop();
-    
-    int headerEnd = raw.indexOf("\r\n\r\n");
-    return (headerEnd >= 0) ? raw.substring(headerEnd + 4) : "";
+    strip.show();
+}
+
+void turnOn() {
+    ledOn = true;
+    Serial.println("💡 ЛЕНТА ВКЛЮЧЕНА (цвет " + String(currentColor) + ")");
+    setAllPixels(colors[currentColor]);
+}
+
+void turnOff() {
+    ledOn = false;
+    Serial.println("🌑 ЛЕНТА ВЫКЛЮЧЕНА");
+    setAllPixels({0, 0, 0});
 }
 
 // ===== SETUP =====
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    delay(1000);
     
-    Serial.println("\n=== 🦕 Дракошка просыпается... ===");
+    Serial.println("\n=== Тест кнопки и ленты ===");
+    Serial.println("Лента: пин " + String(PIN_LED_STRIP));
+    Serial.println("Кнопка: пин " + String(PIN_BUTTON));
     
-    // 1. Инициализация света
-    Serial.print("💡 Инициализация LED... ");
-    light.begin(PIN_LED_STRIP, LED_COUNT);
-    Serial.println("✅");
+    // Инициализация ленты
+    strip.begin();
+    strip.setBrightness(BRIGHTNESS);
+    strip.show();  // Все выключены
     
-    // 2. Инициализация сервоприводов
-    Serial.print(" Инициализация PCA9685... ");
-    if (servo.checkConnection()) {
-        servo.begin();
-        Serial.println("✅");
-    } else {
-        Serial.println("❌ PCA9685 не найден!");
-        light.setEmotion(Emotion::ALARM, true);
-    }
+    // Инициализация кнопки
+    pinMode(PIN_BUTTON, INPUT_PULLUP);  // Внутренняя подтяжка к HIGH
     
-    // 3. Инициализация мозга
-    brain.begin(&servo, &light);
-    
-    // 4. Инициализация обработчика команд
-    commandHandler.begin(&brain, &servo);
-    
-    // 5. Настройка WiFi
-    Serial.print("📡 Настройка Wi-Fi... ");
-    WiFiManager wm;
-    wm.setConfigPortalTimeout(WIFI_CONFIG_TIMEOUT);
-    
-    if (wm.autoConnect(WIFI_AP_SSID, WIFI_AP_PASS)) {
-        wifiOk = true;
-        Serial.println("✅");
-        Serial.println("   IP: " + WiFi.localIP().toString());
-        brain.setMode(BrainMode::JOY);
-        delay(1000);
-    } else {
-        Serial.println("❌");
-        Serial.println("   Работа в автономном режиме");
-        brain.setMode(BrainMode::CALM);
-    }
-    
-    brain.setMode(BrainMode::CALM);
-    Serial.println("\n=== ✅ Дракошка готов к работе! ===\n");
+    Serial.println("Готово! Нажми кнопку BOOT на плате.");
 }
 
 // ===== LOOP =====
 void loop() {
-    // 1. Обновление света (плавные переходы)
-    light.update();
+    // Читаем кнопку (нажатие = LOW, потому что INPUT_PULLUP)
+    bool buttonPressed = (digitalRead(PIN_BUTTON) == LOW);
     
-    // 2. Обновление мозга (автономное поведение)
-    brain.update();
-    
-    // 3. Переподключение WiFi при необходимости
-    if (wifiOk && WiFi.status() != WL_CONNECTED) {
-        if (millis() - lastReconnect > RECONNECT_INTERVAL) {
-            lastReconnect = millis();
-            Serial.println(" Переподключение Wi-Fi...");
-            WiFi.reconnect();
+    if (buttonPressed) {
+        delay(50);  // Антидребезг (debounce)
+        
+        // Проверяем ещё раз (настоящее нажатие)
+        if (digitalRead(PIN_BUTTON) == LOW) {
+            if (ledOn) {
+                // Если включена — выключаем И меняем цвет для следующего раза
+                turnOff();
+                currentColor = (currentColor + 1) % NUM_COLORS;
+                Serial.println("   Следующий цвет: " + String(currentColor));
+            } else {
+                // Если выключена — включаем
+                turnOn();
+            }
+            
+            // Ждём отпускания кнопки
+            while (digitalRead(PIN_BUTTON) == LOW) {
+                delay(10);
+            }
+            delay(200);  // Пауза после отпускания
         }
     }
-    
-    // 4. Проверка почтового ящика Telegram
-    if (wifiOk && WiFi.status() == WL_CONNECTED && millis() - lastBoxCheck > BOX_POLL_INTERVAL) {
-        lastBoxCheck = millis();
-        
-        String cmd = relayGet("/box/pop");
-        if (cmd.length() > 0 && cmd != "empty") {
-        Serial.println("📨 из TG: " + cmd);
-        
-        if (cmd.indexOf("light_joy") >= 0)    light.setEmotion(Emotion::JOY);
-        else if (cmd.indexOf("light_off") >= 0)    light.setEmotion(Emotion::OFF);
-        else if (cmd.indexOf("light_calm") >= 0)   light.setEmotion(Emotion::CALM);
-        else if (cmd.indexOf("light_support") >= 0) light.setEmotion(Emotion::SUPPORT);
-        else if (cmd.indexOf("light_alarm") >= 0)  light.setEmotion(Emotion::ALARM);
-        else if (cmd.indexOf("light_sleep") >= 0)  light.setEmotion(Emotion::SLEEP);
-    }
-    }
-    
-    
-
-    // 5. Обработка команд из Serial
-    commandHandler.handleSerialCommand();
     
     delay(10);
 }

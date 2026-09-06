@@ -25,9 +25,9 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Что нужно сделать, коротко"},
-                    "date": {"type": "string", "description": "Дата в формате YYYY-MM-DD. Если день не указан — сегодняшняя"},
-                    "time": {"type": "string", "description": "Время напоминания в формате HH:MM. Если не указано — 23:59"},
-                    "difficulty": {"type": "integer", "description": "Сложность от 1 до 5, если понятна из текста"}
+                    "date": {"type": "string", "description": "Дата в формате YYYY-MM-DD"},
+                    "time": {"type": "string", "description": "Время в формате HH:MM"},
+                    "difficulty": {"type": "integer", "description": "Сложность от 1 до 5"}
                 },
                 "required": ["title", "date", "time"]
             }
@@ -39,6 +39,42 @@ TOOLS = [
             "name": "list_tasks",
             "description": "Показать список записанных дедлайнов пользователя",
             "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_emotion",
+            "description": "Изменить эмоциональное состояние и подсветку робота. Используй, если пользователь просит посветить, выражает эмоции или просит поддержки.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "emotion": {
+                        "type": "string",
+                        "enum": ["joy", "calm", "support", "alarm", "sleep", "off"],
+                        "description": "joy - радость, calm - спокойствие, support - поддержка/объятия, alarm - тревога/дедлайн, sleep - сон/ночь, off - выключить свет"
+                    }
+                },
+                "required": ["emotion"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_servos",
+            "description": "Управление физическими движениями робота (крылья, голова)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["wave_wings", "center"],
+                        "description": "wave_wings - помахать крыльями, center - вернуть все сервоприводы в центральное положение"
+                    }
+                },
+                "required": ["action"]
+            }
         }
     }
 ]

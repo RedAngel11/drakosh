@@ -10,6 +10,7 @@
             "includePath": [
                 "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/include",
                 "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/src",
+                "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/LittleFS/src",
                 "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit GC9A01A",
                 "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit GFX Library",
                 "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit BusIO",
@@ -236,7 +237,6 @@
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/HTTPUpdateServer/src",
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src",
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/Insights/src",
-                "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/LittleFS/src",
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/NetBIOS/src",
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                 "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
@@ -255,6 +255,7 @@
                 "path": [
                     "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/include",
                     "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/src",
+                    "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/LittleFS/src",
                     "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit GC9A01A",
                     "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit GFX Library",
                     "C:/Users/ksush/Desktop/repositorii/drakosh/Project D/.pio/libdeps/esp32-s3-devkitc-1/Adafruit BusIO",
@@ -481,7 +482,6 @@
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/HTTPUpdateServer/src",
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src",
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/Insights/src",
-                    "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/LittleFS/src",
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/NetBIOS/src",
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                     "C:/Users/ksush/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",

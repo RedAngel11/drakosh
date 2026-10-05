@@ -1,21 +1,16 @@
 #include <Arduino.h>
-#include <Adafruit_NeoPixel.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_GC9A01A.h>
+
 #include "config.h"
+#include "light_engine.h"
+#include "audio_engine.h"
 
-#define NUM_LEDS 60
-#define BRIGHTNESS 50
-#define I2C_SDA 47  
-#define I2C_SCL 48  
-#define PCA9685_ADDR 0x40
-#define SERVO_CHANNEL 0
-
-#define BUTTON_BOOT 0
-#define DEBOUNCE_DELAY 50
-
+// Пины экранов и I2C
+#define I2C_SDA 47
+#define I2C_SCL 48
 #define TFT_MOSI 11
 #define TFT_SCLK 12
 #define TFT_CS_LEFT   10
@@ -24,225 +19,137 @@
 #define TFT_RST       7
 #define TFT_BL        6
 
-#define SCREEN_W 240
-#define SCREEN_H 240
-#define EYE_RADIUS 100
-#define PUPIL_RADIUS 35
-
-// =====================================================
-// === ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ==============================
-// =====================================================
-Adafruit_NeoPixel strip(NUM_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDR);
+// Глобальные объекты (теперь NUM_LEDS и PCA9685_ADDRESS видны из config.h)
+LightEngine lightEngine;
+AudioEngine audio;
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
 Adafruit_GC9A01A displayLeft(TFT_CS_LEFT, TFT_DC, TFT_RST);
 Adafruit_GC9A01A displayRight(TFT_CS_RIGHT, TFT_DC, TFT_RST);
-
-// =====================================================
-// === СОСТОЯНИЯ СИСТЕМЫ ===============================
-// =====================================================
-enum SystemState {
-    STATE_CENTER,
-    STATE_LEFT,
-    STATE_RIGHT
-};
-
-SystemState currentState = STATE_CENTER;
 
 // Переменные для кнопки
 bool lastButtonState = HIGH;
 bool currentButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
 
-// =====================================================
-// === ФУНКЦИИ УПРАВЛЕНИЯ КОМПОНЕНТАМИ =================
-// =====================================================
+// Состояние микрофона
+bool isVoiceActive = false;
+unsigned long voiceDebounceTime = 0;
 
-// --- Управление лентой ---
-void setStripColor(uint8_t r, uint8_t g, uint8_t b) {
-    uint32_t c = strip.Color(r, g, b);
-    for (int i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, c);
-    strip.show();
-}
-
-// --- Управление сервой ---
+// =====================================================
+// === ФУНКЦИИ УПРАВЛЕНИЯ ==============================
+// =====================================================
 void moveServoToAngle(int angle) {
     int pwmValue = map(angle, 0, 180, 150, 550);
-    pwm.setPWM(SERVO_CHANNEL, 0, pwmValue);
+    pwm.setPWM(0, 0, pwmValue);
 }
 
-// --- Управление глазами ---
-void drawEye(Adafruit_GC9A01A &display, int pupilX, int pupilY, uint16_t irisColor) {
-    int cx = SCREEN_W / 2;
-    int cy = SCREEN_H / 2;
-    
+void drawEye(Adafruit_GC9A01A &display, int pupilX, uint16_t irisColor) {
+    int cx = 120, cy = 120; // SCREEN_W / 2
     display.fillScreen(GC9A01A_BLACK);
-    display.fillCircle(cx, cy, EYE_RADIUS, GC9A01A_WHITE);
-    
+    display.fillCircle(cx, cy, 100, GC9A01A_WHITE); // EYE_RADIUS
     int irisX = cx + pupilX * 40;
-    int irisY = cy + pupilY * 40;
-    display.fillCircle(irisX, irisY, PUPIL_RADIUS + 10, irisColor);
-    display.fillCircle(irisX, irisY, PUPIL_RADIUS, GC9A01A_BLACK);
-    display.fillCircle(irisX - 10, irisY - 10, 8, GC9A01A_WHITE);
+    display.fillCircle(irisX, cy, 45, irisColor);   // PUPIL_RADIUS + 10
+    display.fillCircle(irisX, cy, 35, GC9A01A_BLACK); // PUPIL_RADIUS
+    display.fillCircle(irisX - 10, cy - 10, 8, GC9A01A_WHITE); // Блик
 }
 
 void updateEyes(int pupilX, uint16_t irisColor) {
-    drawEye(displayLeft, pupilX, 0, irisColor);
-    drawEye(displayRight, pupilX, 0, irisColor);
+    drawEye(displayLeft, pupilX, irisColor);
+    drawEye(displayRight, pupilX, irisColor);
 }
 
-// =====================================================
-// === ПРИМЕНЕНИЕ СОСТОЯНИЯ КО ВСЕЙ СИСТЕМЕ ============
-// =====================================================
 void applySystemState() {
-    switch(currentState) {
-        case STATE_CENTER:
-            // Серва
-            moveServoToAngle(90);
-            // Лента
-            setStripColor(0, 255, 0);
-            // Глаза
-            updateEyes(0, GC9A01A_GREEN);
-            break;
-            
-        case STATE_LEFT:
-            moveServoToAngle(45);
-            setStripColor(0, 0, 255);
-            updateEyes(-1, GC9A01A_BLUE);
-            break;
-            
-        case STATE_RIGHT:
-            moveServoToAngle(135);
-            setStripColor(255, 255, 0);
-            updateEyes(1, GC9A01A_YELLOW);
-            break;
-    }
+    moveServoToAngle(90);
+    lightEngine.setEmotion(Emotion::CALM);
+    updateEyes(0, GC9A01A_GREEN);
 }
 
 // =====================================================
-// === ПЕРЕХОД В СЛЕДУЮЩЕЕ СОСТОЯНИЕ ===================
+// === ПРОВЕРКИ ========================================
 // =====================================================
-void nextState() {
-    switch(currentState) {
-        case STATE_CENTER:
-            currentState = STATE_LEFT;
-            break;
-        case STATE_LEFT:
-            currentState = STATE_RIGHT;
-            break;
-        case STATE_RIGHT:
-            currentState = STATE_CENTER;
-            break;
-    }
-    applySystemState();
-}
-
-// =====================================================
-// === ПРОВЕРКА КОМАНД =================================
-// =====================================================
-
-// Сейчас: проверка кнопки
 bool checkButton() {
-    int reading = digitalRead(BUTTON_BOOT);
-    
-    if (reading != lastButtonState) {
-        lastDebounceTime = millis();
-    }
-    
-    if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
+    int reading = digitalRead(PIN_BUTTON);
+    if (reading != lastButtonState) lastDebounceTime = millis();
+    if ((millis() - lastDebounceTime) > 50) {
         if (reading != currentButtonState) {
             currentButtonState = reading;
-            
-            if (currentButtonState == LOW) {
-                return true;
-            }
+            if (currentButtonState == LOW) return true; // Нажатие (LOW, т.к. INPUT_PULLUP)
         }
     }
-    
     lastButtonState = reading;
     return false;
 }
 
-// В будущем: проверка Telegram
-// bool checkTelegramCommand() {
-//     // Логика проверки входящих сообщений
-//     // Если пришла команда "/left" → currentState = STATE_LEFT
-//     // Если пришла команда "/right" → currentState = STATE_RIGHT
-//     // Если пришла команда "/center" → currentState = STATE_CENTER
-//     // return true если команда получена
-// }
-
-// =====================================================
-// === ПРОВЕРКА I2C ====================================
-// =====================================================
 bool checkI2CConnection() {
     for (byte address = 1; address < 127; address++) {
         Wire.beginTransmission(address);
-        if (Wire.endTransmission() == 0 && address == PCA9685_ADDR) {
-            return true;
-        }
+        if (Wire.endTransmission() == 0 && address == PCA9685_ADDRESS) return true;
     }
     return false;
 }
 
-void showError() {
-    for (int i = 0; i < 3; i++) {
-        setStripColor(255, 0, 0);
-        delay(300);
-        setStripColor(0, 0, 0);
-        delay(300);
-    }
-    setStripColor(255, 0, 0);
-}
-
 // =====================================================
-// === SETUP ===========================================
+// === SETUP & LOOP ====================================
 // =====================================================
 void setup() {
-    pinMode(BUTTON_BOOT, INPUT_PULLUP);
-    
-    strip.begin();
-    strip.setBrightness(BRIGHTNESS);
-    setStripColor(255, 0, 0);
-    delay(500);
+    Serial.begin(115200);
+    Serial.println("🚀 Запуск Дракошки...");
 
+    pinMode(PIN_BUTTON, INPUT_PULLUP);
     pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, HIGH);
+
+    // 1. Инициализация модулей
+    lightEngine.begin(PIN_LED_STRIP, NUM_LEDS);
+    lightEngine.setEmotion(Emotion::ALARM, true); // Тест ленты (красный)
+    delay(500);
 
     displayLeft.begin();
     displayRight.begin();
     displayLeft.setRotation(0);
     displayRight.setRotation(0);
-    displayLeft.fillScreen(GC9A01A_BLACK);
-    displayRight.fillScreen(GC9A01A_BLACK);
 
     Wire.begin(I2C_SDA, I2C_SCL);
     if (!checkI2CConnection()) {
-        showError();
+        Serial.println("❌ PCA9685 не найден!");
         while (1) { delay(1000); }
     }
 
     pwm.begin();
     pwm.setOscillatorFrequency(27000000);
-    pwm.setPWMFreq(50);
-    
+    pwm.setPWMFreq(PCA9685_FREQ);
+
+    audio.begin();
+
     applySystemState();
-    
-    delay(500);
+    Serial.println("✅ Система готова. Нажми BOOT для звука, скажи что-нибудь для света.");
 }
 
-// =====================================================
-// === LOOP ============================================
-// =====================================================
 void loop() {
-    // Проверяем команды (сейчас кнопка, потом Telegram)
+    // 1. Обработка кнопки BOOT -> проигрывание звука
     if (checkButton()) {
-        nextState();
+        Serial.println("🔊 Кнопка нажата! Проигрываю звук...");
+        audio.playWavFile("/hello.wav"); 
+        // Если файла нет, сработает фолбэк на playTone(440, 500) из audio_engine.h
     }
-    
-    // В будущем:
-    // if (checkTelegramCommand()) {
-    //     applySystemState();
-    // }
-    
+
+    // 2. Обработка микрофона -> реакция ленты
+    if (audio.checkVoiceActivity()) {
+        if (!isVoiceActive) {
+            Serial.println("🎤 Голос обнаружен!");
+            lightEngine.setEmotion(Emotion::VOICE_DETECTED);
+            isVoiceActive = true;
+            voiceDebounceTime = millis();
+        }
+    } else {
+        // Если голос пропал, ждем 1 секунду и возвращаем спокойный цвет (защита от моргания)
+        if (isVoiceActive && (millis() - voiceDebounceTime > 1000)) {
+            lightEngine.setEmotion(Emotion::CALM);
+            isVoiceActive = false;
+        }
+    }
+
+    // 3. Обновление плавных переходов света и задержка
+    lightEngine.update();
     delay(10);
 }

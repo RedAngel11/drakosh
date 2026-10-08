@@ -1,25 +1,23 @@
 #pragma once
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
-#include "config.h" // <-- Теперь видим NUM_LEDS и BRIGHTNESS
+#include "config.h"
 
 enum class Emotion {
     CALM, JOY, SUPPORT, ALARM, SLEEP, OFF, VOICE_DETECTED
 };
 
-struct RGB {
-    uint8_t r, g, b;
-};
+struct RGB { uint8_t r, g, b; };
 
 inline RGB emotionColor(Emotion e) {
     switch (e) {
         case Emotion::CALM:          return RGB{ 20,  80, 160}; // Спокойный синий
-        case Emotion::JOY:           return RGB{255, 150,   0}; // Оранжевый
-        case Emotion::SUPPORT:       return RGB{ 80, 200, 100}; // Зелёный
-        case Emotion::ALARM:         return RGB{230,  40,  40}; // Красный
-        case Emotion::SLEEP:         return RGB{ 60,  30, 110}; // Тёмно-фиолетовый
-        case Emotion::OFF:           return RGB{  0,   0,   0}; // Выкл
-        case Emotion::VOICE_DETECTED:return RGB{255, 255, 255}; // Ярко-белый при голосе!
+        case Emotion::JOY:           return RGB{255, 150,   0};
+        case Emotion::SUPPORT:       return RGB{ 80, 200, 100};
+        case Emotion::ALARM:         return RGB{230,  40,  40};
+        case Emotion::SLEEP:         return RGB{ 60,  30, 110};
+        case Emotion::OFF:           return RGB{  0,   0,   0};
+        case Emotion::VOICE_DETECTED:return RGB{255, 255, 255}; // Ярко-белый при голосе
     }
     return RGB{0, 0, 0};
 }
@@ -29,7 +27,7 @@ public:
     void begin(uint8_t pin, uint16_t count) {
         _strip = new Adafruit_NeoPixel(count, pin, NEO_GRB + NEO_KHZ800);
         _strip->begin();
-        _strip->setBrightness(BRIGHTNESS); // <-- Ошибка исправлена
+        _strip->setBrightness(BRIGHTNESS);
         setEmotion(Emotion::CALM, true);
     }
 
@@ -49,11 +47,8 @@ public:
 
     void update() {
         if (!_fading || !_strip) return;
-        float t = (millis() - _startMs) / 800.0; // Чуть быстрее реакция
-        if (t >= 1.0) { 
-            t = 1.0; 
-            _fading = false; 
-        }
+        float t = (millis() - _startMs) / 800.0;
+        if (t >= 1.0) { t = 1.0; _fading = false; }
         _cur.r = _from.r + (_target.r - _from.r) * t;
         _cur.g = _from.g + (_target.g - _from.g) * t;
         _cur.b = _from.b + (_target.b - _from.b) * t;

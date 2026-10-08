@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <LittleFS.h>
+#include <math.h>
 #include "config.h"
 
 class AudioEngine {
@@ -9,11 +10,7 @@ public:
     void begin() {
         setupI2SOutput();
         setupI2SInput();
-        if (!LittleFS.begin(true)) {
-            Serial.println("❌ LittleFS mount failed");
-        } else {
-            Serial.println("✅ LittleFS initialized");
-        }
+        LittleFS.begin(true);
         _initialized = true;
     }
 
@@ -21,14 +18,13 @@ public:
         if (!_initialized) return;
         File file = LittleFS.open(path, "r");
         if (!file) {
-            Serial.println("⚠️ Файл не найден: " + String(path) + ". Проигрываю тестовый тон.");
-            playTone(440, 500); // Фолбэк, если файла нет
+            // Если файла нет, просто играем короткий тон, чтобы не было тишины
+            playTone(600, 300); 
             return;
         }
         file.seek(44); // Пропускаем WAV заголовок
         uint8_t buffer[1024];
         size_t bytesRead;
-        Serial.println("▶️ Воспроизведение: " + String(path));
         while (file.available()) {
             bytesRead = file.read(buffer, sizeof(buffer));
             size_t bytesWritten;
@@ -103,11 +99,10 @@ private:
             .use_apll = false,
             .tx_desc_auto_clear = true
         };
-        // ИСПРАВЛЕНИЕ ОШИБКИ КОМПИЛЯЦИИ ЗДЕСЬ:
         i2s_pin_config_t pin_config = {
             .bck_io_num = I2S_IN_BCK,
             .ws_io_num = I2S_IN_WS,
-            .data_out_num = I2S_PIN_NO_CHANGE, // <-- Обязательно для RX!
+            .data_out_num = I2S_PIN_NO_CHANGE,
             .data_in_num = I2S_IN_DATA
         };
         i2s_driver_install(I2S_NUM_1, &i2s_config, 0, NULL);

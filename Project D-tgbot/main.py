@@ -1,208 +1,160 @@
+"""
+Telegram-бот для управления роботом-драконом Drakoshka
+"""
+
 import asyncio
-import json
-import os
-import re
-from datetime import datetime
+import logging
+import requests
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart, Command
 
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.filters import Command, CommandStart
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
+import config
+from qwen_client import get_drakosh_command
 
-from config import TOKEN
-from qwen_client import ask_qwen
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Ходим через наше реле — VPN не нужен
-server = TelegramAPIServer.from_base("https://helloesp32.ksushat75.workers.dev/")
-session = AiohttpSession(api=server)
-bot = Bot(token=TOKEN, session=session)
-
+# Инициализация бота
+bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
-router = Router()
-
-# --- Память дедлайнов: файл рядом с ботом ---
-DB_FILE = os.path.join(os.path.dirname(__file__), "deadlines.json")
-
-def load_deadlines():
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
-
-def save_deadlines():
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(DEADLINES, f, ensure_ascii=False, indent=2)
-
-DEADLINES = load_deadlines()
-CHAT_HISTORY = {}  # память диалогов с нейросетью
-
-def parse_time(s):
-    """Понимает 24-часовой формат: '18:05', '8:05', '18.05'"""
-    m = re.match(r"^(\d{1,2})[:.](\d{2})$", s.strip())
-    if not m:
-        return None
-    h, mi = int(m.group(1)), int(m.group(2))
-    if h > 23 or mi > 59:
-        return None
-    return f"{h:02d}:{mi:02d}"   # приводим к '08:05' — так сортируется правильно
-def parse_date(s):
-    try:
-        return datetime.strptime((s or "").strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
-    except Exception:
-        return None
 
 
-def deadlines_text(chat_id):
-    my = sorted(
-        (d for d in DEADLINES if d["chat"] == chat_id),
-        key=lambda d: (d.get("date") or "", d["time"])
-    )
-    if not my:
-        return "Пока пусто. Скажи просто: «запиши, что завтра в 10:00 сдать лабу»"
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    lines = []
-    for i, d in enumerate(my):
-        when = "сегодня" if (d.get("date") or today) == today else d.get("date", "")
-        lines.append(f"{i + 1}. ⏰ {when} {d['time']} — {d['text']}")
-    return "Твои дедлайны:\n" + "\n".join(lines)
-@router.message(CommandStart())
-async def start(m: types.Message):
-    await m.answer(
-        "Привет! Я Дракошка 🐉\n"
-        "/set_deadline 18:00 сдать лабу — добавить дедлайн\n"
-        "/deadline — показать список по возрастанию времени"
-    )
-
-@router.message(Command("set_deadline"))
-async def set_deadline(m: types.Message):
-    parts = (m.text or "").split(maxsplit=2)
-    if len(parts) < 3:
-        await m.answer("Формат: /set_deadline 18:00 сдать лабу")
-        return
-    _, raw_time, text = parts
-    t = parse_time(raw_time)
-    if t is None:
-        await m.answer("Не понял время 🙈 Нужен 24-часовой формат: /set_deadline 18:00 сдать лабу")
-        return
-    DEADLINES.append({"chat": m.chat.id, "time": t, "text": text})
-    DEADLINES.sort(key=lambda d: d["time"])
-    save_deadlines()
-    await m.answer(f"Записал! В {t} напомню: «{text}» ⏰")
-
-@router.message(Command("deadline"))
-async def show_deadlines(m: types.Message):
-    await m.answer(deadlines_text(m.chat.id))
-
-async def reminder_loop():
-    while True:
-        now = datetime.now()
-        now_date = now.strftime("%Y-%m-%d")
-        now_time = now.strftime("%H:%M")
-        fired = False
-
-        for d in list(DEADLINES):
-            time_match = d["time"] == now_time
-            date_ok = (d.get("date") is None) or (d.get("date") == now_date)
-
-            if time_match and date_ok:
-                try:
-                    await bot.send_message(d["chat"], f"🔥 Дедлайн: {d['text']}! Дракошка верит в тебя 🐉")
-                except Exception as e:
-                    print("Ошибка напоминания:", e)
-                DEADLINES.remove(d)
-                fired = True
-
-        if fired:
-            save_deadlines()
-        await asyncio.sleep(15)
-
-import aiohttp
-from aiogram import F
-
-RELAY = "https://helloesp32.ksushat75.workers.dev"
-
-
-# ... (начало файла без изменений, импорт, загрузка DEADLINES и т.д.)
-
-async def push_cmd(cmd: str):
-    try:
-        async with aiohttp.ClientSession() as s:
-            await s.get(f"{RELAY}/box/push", params={"cmd": cmd}, timeout=5)
-    except Exception as e:
-        print("Не удалось отправить команду роботу:", e)
-
-
-@router.message(F.text)
-async def free_text(m: types.Message):
-    history = CHAT_HISTORY.get(m.chat.id, [])[-10:]
-    history.append({"role": "user", "content": m.text})
-
-    result = await ask_qwen(history)
-    replies = []
-
-    for call in result["tool_calls"]:
-        fname = call.get("function", {}).get("name")
+def send_command_to_esp32(command_data: dict) -> bool:
+    """
+    Отправка команды на ESP32 через HTTP POST
+    Возвращает True если команда доставлена успешно
+    """
+    for attempt in range(config.MAX_RETRIES):
         try:
-            args = json.loads(call.get("function", {}).get("arguments") or "{}")
-        except json.JSONDecodeError:
-            args = {}
+            response = requests.post(
+                config.ESP32_COMMAND_URL,
+                json=command_data,
+                timeout=config.ESP32_TIMEOUT
+            )
+            response.raise_for_status()
+            logger.info(f"✅ Команда отправлена на ESP32: {command_data['command']}")
+            return True
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"⚠️ Попытка {attempt + 1}: ESP32 недоступен")
+            if attempt < config.MAX_RETRIES - 1:
+                asyncio.sleep(1)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка отправки команды: {e}")
+            return False
 
-        # 1. Обработка дедлайнов (как было)
-        if fname == "add_deadline":
-            date = parse_date(args.get("date")) or datetime.now().strftime("%Y-%m-%d")
-            time_ = parse_time(args.get("time") or "") or "23:59"
-            title = (args.get("title") or "задача").strip()
-            diff = args.get("difficulty")
-            DEADLINES.append({"chat": m.chat.id, "date": date, "time": time_, "text": title, "difficulty": diff})
-            DEADLINES.sort(key=lambda d: (d.get("date") or "", d["time"]))
-            save_deadlines()
-            pretty = "сегодня" if date == datetime.now().strftime("%Y-%m-%d") else date
-            extra = f", сложность {diff}/5" if diff else ""
-            replies.append(f"Записал! Напомню {pretty} в {time_}: «{title}»{extra} ⏰")
+    logger.error("❌ Все попытки отправки команды на ESP32 провалились")
+    return False
 
-        elif fname == "list_tasks":
-            replies.append(deadlines_text(m.chat.id))
 
-        # 2. НОВОЕ: Обработка эмоций робота
-        elif fname == "set_emotion":
-            emotion = args.get("emotion", "calm")
-            await push_cmd(f"light_{emotion}")
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    """Обработчик команды /start"""
+    welcome_text = (
+        "🐉 Рррр! Привет! Я твой дракошка Дракошка!\n\n"
+        "Вот что я умею:\n"
+        "• Поздороваться и попрощаться\n"
+        "• Петь песенки\n"
+        "• Танцевать\n"
+        "• Включать радугу\n"
+        "• Менять цвет\n"
+        "• Регулировать яркость, громкость\n\n"
+        "Просто напиши мне, что хочешь!"
+    )
+    await message.answer(welcome_text)
 
-            emotion_emojis = {
-                "joy": "Свечусь радостью! 🟠🐉",
-                "calm": "Спокойствие и гармония 🔵",
-                "support": "Обнимаю тебя! Я рядом 💚🐉",
-                "alarm": "Внимание! Режим тревоги! 🔴",
-                "sleep": "Спокойной ночи... гашу свет 💜",
-                "off": "Гасну... 🌑"
-            }
-            replies.append(emotion_emojis.get(emotion, "Принято!"))
 
-        # 3. НОВОЕ: Обработка движений
-        elif fname == "move_servos":
-            action = args.get("action", "center")
-            await push_cmd(action)
-            if action == "wave_wings":
-                replies.append("Машу крыльями! 🦖")
-            else:
-                replies.append("Вернулся в исходное положение 🧍‍♂️")
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    """Обработчик команды /help"""
+    help_text = (
+        " Доступные команды:\n\n"
+        "• привет / hello — поздороваться\n"
+        "• пока / bye — попрощаться\n"
+        "• спой / sing — спеть песенку\n"
+        "• станцуй / dance — потанцевать\n"
+        "• радуга / rainbow — включить радугу\n"
+        "• поменяй цвет на [цвет] — сменить цвет\n"
+        "  (red, blue, green, yellow, purple, white)\n"
+        "• яркость [0-255] — изменить яркость\n"
+        "• громкость [0-100] — изменить громкость\n"
+        "• моргни — моргнуть глазами\n\n"
+        "Или просто напиши что-нибудь, я пойму!"
+    )
+    await message.answer(help_text)
 
-    # Добавляем текстовый ответ от нейросети (если он есть)
-    if result["text"]:
-        replies.append(result["text"])
 
-    # Сохраняем историю
-    history.append({"role": "assistant", "content": result["text"] or "\n".join(replies)})
-    CHAT_HISTORY[m.chat.id] = history
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    """Проверка статуса ESP32"""
+    try:
+        response = requests.get(
+            f"http://{config.ESP32_IP}:{config.ESP32_PORT}/status",
+            timeout=3
+        )
+        if response.status_code == 200:
+            await message.answer("✅ Дракошка онлайн и готов к командам!")
+        else:
+            await message.answer("⚠️ Дракошка отвечает, но что-то не так...")
+    except requests.exceptions.RequestException:
+        await message.answer("❌ Дракошка offline. Проверь подключение к сети.")
 
-    await m.answer(("\n".join(replies) or "Понял!")[:4096])
+
+@dp.message()
+async def handle_user_message(message: types.Message):
+    """Обработчик всех текстовых сообщений"""
+    user_text = message.text.strip()
+
+    if not user_text:
+        return
+
+    # Отправляем сообщение в нейросеть
+    logger.info(f"📝 Получено сообщение: {user_text}")
+
+    # Показываем индикатор "думаю"
+    thinking_msg = await message.answer("🤔 Дракошка думает...")
+
+    # Получаем команду от нейросети
+    command_data = get_drakosh_command(user_text)
+
+    # Удаляем сообщение "думаю"
+    try:
+        await thinking_msg.delete()
+    except:
+        pass
+
+    # Отправляем текстовый ответ пользователю
+    reply_text = command_data.get("reply_to_user", "Рррр?")
+    await message.answer(reply_text)
+
+    # Отправляем команду на ESP32
+    command = command_data.get("command", "unknown")
+
+    if command != "unknown":
+        success = send_command_to_esp32(command_data)
+        if not success:
+            await message.answer(
+                "⚠️ Команду поняла, но не смогла передать дракошке. "
+                "Проверь, что он включён и подключён к сети."
+            )
+    else:
+        logger.info(f"Неизвестная команда, не отправляем на ESP32")
+
 
 async def main():
-    dp.include_router(router)
-    asyncio.create_task(reminder_loop())
-    await dp.start_polling(bot, polling_timeout=10)
+    """Запуск бота"""
+    logger.info("🚀 Запуск бота Drakoshka...")
+    logger.info(f"🤖 AI провайдер: {config.AI_PROVIDER}")
+    logger.info(f" ESP32 адрес: {config.ESP32_IP}")
+
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info(" Бот остановлен пользователем")

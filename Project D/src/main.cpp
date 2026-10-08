@@ -1,94 +1,84 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_PWMServoDriver.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_GC9A01A.h>
-
 #include "config.h"
-#include "light_engine.h"
-#include "audio_engine.h"
+#include "network_client.h"
+#include "command_handler.h"
 
-// Глобальные объекты
+#include "engines/light_engine.h"
+#include "engines/audio_engine.h"
+#include "engines/display_engine.h"
+#include "engines/servo_engine.h"
+
+NetworkClient network;
 LightEngine lightEngine;
-AudioEngine audio;
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
-Adafruit_GC9A01A displayLeft(10, 8, 7);  // CS, DC, RST
-Adafruit_GC9A01A displayRight(9, 8, 7);
+AudioEngine audioEngine;
+DisplayEngine displayEngine;
+ServoEngine servoEngine;
+CommandHandler cmdHandler;
 
-// Переменные для кнопки
 int lastButtonReading = HIGH;
 unsigned long lastDebounceTime = 0;
 
-// Состояние микрофона
 bool isVoiceActive = false;
 unsigned long voiceDebounceTime = 0;
 
 void setup() {
+    // 0. Кнопка
     pinMode(PIN_BUTTON, INPUT_PULLUP);
-    pinMode(6, OUTPUT);        // TFT_BL
-    digitalWrite(6, HIGH);
 
-    // 1. Свет
+    // 1. Сеть
+    network.begin();
+
+    // 2. Движки
     lightEngine.begin(PIN_LED_STRIP, NUM_LEDS);
     lightEngine.setEmotion(Emotion::CALM, true);
+    
+    audioEngine.begin();
+    displayEngine.begin();
+    servoEngine.begin();
 
-    // 2. Экраны
-    displayLeft.begin();
-    displayRight.begin();
-    displayLeft.setRotation(0);
-    displayRight.setRotation(0);
-    displayLeft.fillScreen(GC9A01A_BLACK);
-    displayRight.fillScreen(GC9A01A_BLACK);
-
-    // 3. I2C и Серво (БЕЗ while(1)! Если нет - просто идем дальше)
-    Wire.begin(47, 48);
-    bool i2cFound = false;
-    for (byte address = 1; address < 127; address++) {
-        Wire.beginTransmission(address);
-        if (Wire.endTransmission() == 0 && address == PCA9685_ADDRESS) {
-            i2cFound = true;
-            break;
-        }
-    }
-    if (i2cFound) {
-        pwm.begin();
-        pwm.setOscillatorFrequency(27000000);
-        pwm.setPWMFreq(50);
-    }
-
-    // 4. Аудио
-    audio.begin();
+    // 3. Связываем обработчик команд с движками
+    cmdHandler.setEngines(&lightEngine, &audioEngine, &displayEngine, &servoEngine);
 }
 
 void loop() {
-    // 1. Обработка кнопки BOOT -> проигрывание звука
+    // 1. Сетевой опрос
+    String command = network.pollCommand();
+    if (command != "none") {
+        cmdHandler.execute(command);
+    }
+
+    // 2. Обработка кнопки BOOT
     int currentReading = digitalRead(PIN_BUTTON);
     if (currentReading != lastButtonReading) {
         lastDebounceTime = millis();
     }
     if ((millis() - lastDebounceTime) > 50) {
         if (currentReading == LOW && lastButtonReading == HIGH) {
-            audio.playWavFile("/hello.wav"); 
+            audioEngine.playWavFile("/hello.wav"); 
+            displayEngine.showState(EyeState::HAPPY);
         }
     }
     lastButtonReading = currentReading;
 
-    // 2. Обработка микрофона -> реакция ленты
-    if (audio.checkVoiceActivity()) {
+    // 3. Обработка микрофона
+    if (audioEngine.checkVoiceActivity()) {
         if (!isVoiceActive) {
             lightEngine.setEmotion(Emotion::VOICE_DETECTED);
+            displayEngine.showState(EyeState::HAPPY);
             isVoiceActive = true;
             voiceDebounceTime = millis();
         }
     } else {
-        // Если голос пропал, ждем 1 секунду и возвращаем спокойный цвет
         if (isVoiceActive && (millis() - voiceDebounceTime > 1000)) {
             lightEngine.setEmotion(Emotion::CALM);
+            displayEngine.showState(EyeState::CALM);
             isVoiceActive = false;
         }
     }
 
-    // 3. Обновление плавных переходов света
+    // 4. Фоновые задачи движков
     lightEngine.update();
+    displayEngine.update();
+    
     delay(10);
 }

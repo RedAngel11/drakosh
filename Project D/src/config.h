@@ -23,3 +23,9 @@
 
 // ===== ПОРОГ ГОЛОСА =====
 #define VOICE_THRESHOLD 300
+
+// ===== СЕТЬ И РЕЛЕ =====
+#define WIFI_SSID "vivoV27e"
+#define WIFI_PASSWORD "111222333"
+#define RELAY_PULL_URL "https://helloesp32.ksushat75.workers.dev/box/pull"
+#define RELAY_STATUS_URL "https://helloesp32.ksushat75.workers.dev/box/status"// ===== СЕТЬ И РЕЛЕ =====

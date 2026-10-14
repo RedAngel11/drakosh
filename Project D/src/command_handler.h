@@ -15,32 +15,45 @@ public:
         _servo = servo;
     }
 
-    void execute(String cmd) {
+        void execute(String cmd) {
         if (cmd == "none" || cmd == "") return;
 
-        if (cmd == "greet") {
+        // Команда может прийти с параметром: "change_color:red"
+        String name = cmd;
+        String param = "";
+        int idx = cmd.indexOf(':');
+        if (idx > 0) {
+            name = cmd.substring(0, idx);
+            param = cmd.substring(idx + 1);
+            param.trim();
+        }
+
+        if (name == "greet") {
             _audio->playWavFile("/hello.wav");
             _light->setEmotion(Emotion::JOY);
             _display->showState(EyeState::HAPPY);
-        } 
-        else if (cmd == "bye") {
+        }
+        else if (name == "bye") {
             _audio->playWavFile("/bye.wav");
             _light->setEmotion(Emotion::SLEEP);
             _display->showState(EyeState::SLEEP);
-        } 
-        else if (cmd == "sing") {
+        }
+        else if (name == "sing") {
             _audio->playWavFile("/sing.wav");
             _display->showState(EyeState::HAPPY);
         }
-        else if (cmd == "dance") {
+        else if (name == "dance") {
             _servo->dance();
             _light->setEmotion(Emotion::JOY);
-        } 
-        else if (cmd == "blink") {
+        }
+        else if (name == "blink") {
             _display->blink();
         }
-        else if (cmd == "rainbow") {
-            _light->setEmotion(Emotion::JOY); 
+        else if (name == "change_color") {
+            _light->setColorByName(param);   // неизвестное имя просто игнорируем
+        }
+        else if (name == "set_brightness") {
+            _light->setBrightness((uint8_t)param.toInt());
         }
     }
 

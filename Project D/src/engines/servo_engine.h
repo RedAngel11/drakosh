@@ -23,18 +23,21 @@ public:
             pwm.begin();
             pwm.setOscillatorFrequency(27000000);
             pwm.setPWMFreq(50); // 50 Гц для сервоприводов
+            
+            // Инициализация всех 5 серв в центральное положение
+            _resetAllServos();
         }
     }
 
     void dance() {
-        // Дергаем по 2-3 сервы, чтобы не перегружать блок питания
+        // Танец с 5 сервами - дергаем по 2-3 за раз
         _moveServos({0, 1}, 300, 400);
         delay(300);
         _moveServos({2, 3}, 400, 500);
         delay(300);
-        _moveServos({4, 5, 6}, 300, 400);
+        _moveServos({4}, 300, 400);
         delay(300);
-        _moveServos({7, 8, 9}, 400, 500);
+        _moveServos({0, 2, 4}, 400, 500);
         delay(300);
         
         // Возврат в исходное положение
@@ -43,17 +46,20 @@ public:
 
 private:
     Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
+    const int SERVO_COUNT = 5; // MVP: только 5 сервоприводов
 
     void _moveServos(std::initializer_list<int> servos, int minPulse, int maxPulse) {
         for (int num : servos) {
-            int pulse = random(minPulse, maxPulse);
-            pwm.setPWM(num, 0, pulse);
+            if (num < SERVO_COUNT) { // Защита от выхода за пределы
+                int pulse = random(minPulse, maxPulse);
+                pwm.setPWM(num, 0, pulse);
+            }
         }
     }
 
     void _resetAllServos() {
-        for (int i = 0; i < 10; i++) {
-            pwm.setPWM(i, 0, 300); // Центральное положение (подстрой под свои сервы)
+        for (int i = 0; i < SERVO_COUNT; i++) {
+            pwm.setPWM(i, 0, 300); // Центральное положение
         }
     }
 };

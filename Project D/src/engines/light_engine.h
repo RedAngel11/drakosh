@@ -54,6 +54,31 @@ public:
         _cur.b = _from.b + (_target.b - _from.b) * t;
         _apply();
     }
+        // Задать произвольный цвет с плавным переходом (переиспользуем готовый механизм фейда)
+    void setColorRGB(uint8_t r, uint8_t g, uint8_t b) {
+        _from = _cur;
+        _target = RGB{r, g, b};
+        _startMs = millis();
+        _fading = true;
+    }
+
+    // Задать цвет по имени; false — если имя неизвестно
+    bool setColorByName(const String& name) {
+        if      (name == "red")    setColorRGB(255, 0, 0);
+        else if (name == "blue")   setColorRGB(0, 0, 255);
+        else if (name == "green")  setColorRGB(0, 255, 0);
+        else if (name == "yellow") setColorRGB(255, 255, 0);
+        else if (name == "purple") setColorRGB(128, 0, 128);
+        else if (name == "white")  setColorRGB(255, 255, 255);
+        else if (name == "orange") setColorRGB(255, 128, 0);
+        else if (name == "cyan")   setColorRGB(0, 255, 255);
+        else return false;
+        return true;
+    }
+
+    void setBrightness(uint8_t value) {
+        if (_strip) _strip->setBrightness(value);
+    }
 
 private:
     void _apply() {

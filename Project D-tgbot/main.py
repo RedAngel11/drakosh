@@ -1,122 +1,102 @@
-# main.py
 import asyncio
-import logging
 import aiohttp
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart, Command
+from aiogram import Bot, Dispatcher, Router, types
+from aiogram.filters import CommandStart
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
+from aiogram import F
 
-import config
+from config import TOKEN, RELAY_URL
 from ai_client import get_drakosh_command
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# ВОЗВРАЩАЕМ РАБОЧИЙ ПРОКСИ ЧЕРЕЗ CLOUDFLARE
+server = TelegramAPIServer.from_base(RELAY_URL)
+session = AiohttpSession(api=server)
+bot = Bot(token=TOKEN, session=session)
 
-bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
+router = Router()
 
+def build_cmd(command_data: dict) -> str:
+    """Склеивает команду и параметр в одну строку для реле"""
+    cmd = command_data.get("command", "unknown")
+    params = command_data.get("params") or {}
+    if cmd == "change_color" and params.get("color"):
+        return f"change_color:{params['color']}"
+    if cmd == "set_brightness" and params.get("value") is not None:
+        return f"set_brightness:{int(params['value'])}"
+    return cmd
 
-async def send_command_to_esp32(command_data: dict) -> bool:
-    """Асинхронная отправка команды на ESP32 через Cloudflare Relay"""
-    cmd_str = command_data.get("command", "unknown")
-
-    for attempt in range(config.MAX_RETRIES):
-        try:
-            async with aiohttp.ClientSession() as session:
-                # Формируем URL как в твоем старом коде: /box/push?cmd=dance
-                url = f"{config.RELAY_URL}/box/push?cmd={cmd_str}"
-
-                logger.info(f"📡 Отправка команды через реле: {url}")
-
-                async with session.get(url, timeout=config.AI_TIMEOUT) as response:
-                    if response.status == 200:
-                        logger.info(f"✅ Команда '{cmd_str}' успешно доставлена через реле!")
-                        return True
-                    else:
-                        logger.warning(f"⚠️ Реле вернуло статус {response.status}")
-
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Попытка {attempt + 1}: Таймаут соединения с реле")
-        except aiohttp.ClientError as e:
-            logger.error(f"❌ Ошибка сети при отправке: {e}")
-
-        if attempt < config.MAX_RETRIES - 1:
-            await asyncio.sleep(1.5)  # Асинхронная пауза, не блокирует бота!
-
-    logger.error("❌ Все попытки отправки команды через реле провалились")
-    return False
-
-
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    welcome_text = (
-        "🐉 Рррр! Привет! Я твой дракошка!\n\n"
-        "Я подключен через надежное облачное реле.\n"
-        "Напиши: 'привет', 'станцуй', 'радуга' или 'поменяй цвет на синий'!"
-    )
-    await message.answer(welcome_text)
-
-
-@dp.message(Command("status"))
-async def cmd_status(message: types.Message):
-    """Проверка статуса через реле"""
+async def push_cmd(cmd: str):
     try:
-        async with aiohttp.ClientSession() as session:
-            # Предполагаем, что у реле есть эндпоинт /status или /box/status
-            url = f"{config.RELAY_URL}/box/status"
-            async with session.get(url, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    await message.answer(f"✅ Дракошка онлайн! Статус: {data.get('status', 'OK')}")
-                else:
-                    await message.answer("⚠️ Реле работает, но дракошка не отвечает.")
+        async with aiohttp.ClientSession() as s:
+            await s.get(f"{RELAY_URL}/box/push", params={"cmd": cmd}, timeout=5)
     except Exception as e:
-        await message.answer(f"❌ Не удалось связаться с реле: {e}")
+        print("Не удалось отправить команду роботу:", e)
 
 
-@dp.message()
-async def handle_user_message(message: types.Message):
-    user_text = message.text.strip()
+@router.message(CommandStart())
+async def start(m: types.Message):
+    await m.answer(
+        "Привет! Я Дракошка 🐉\n"
+        "Напиши мне что-нибудь, например:\n"
+        "• 'привет' или 'станцуй'\n"
+        "• 'поменяй цвет на синий'\n"
+        "• или просто расскажи, как прошел день!"
+    )
+
+
+@router.message(F.text)
+async def free_text(m: types.Message):
+    user_text = m.text.strip()
     if not user_text:
         return
 
-    logger.info(f"📝 Получено сообщение: {user_text}")
-
-    thinking_msg = await message.answer("🤔 Дракошка думает...")
-
-    # Получаем команду от нейросети
-    command_data = get_drakosh_command(user_text)
-
+    thinking_msg = None
     try:
-        await thinking_msg.delete()
+        thinking_msg = await m.answer("🤔 Дракошка думает...")
     except Exception:
         pass
 
+    # ГЛАВНАЯ ПРАВКА: синхронный запрос к Яндексу уходит в отдельный поток,
+    # event loop больше не блокируется, бот не "замолкает"
+    try:
+        command_data = await asyncio.to_thread(get_drakosh_command, user_text)
+    except Exception as e:
+        print("Ошибка нейросети:", e)
+        command_data = {"command": "unknown", "params": {},
+                        "reply_to_user": "Рррр? Я отвлёкся, повтори, пожалуйста!"}
+
     reply_text = command_data.get("reply_to_user", "Рррр?")
-    await message.answer(reply_text)
 
+    # ПРАВКА 2: отправка ответа с одной повторной попыткой при таймауте
+    for attempt in range(2):
+        try:
+            await m.answer(reply_text)
+            break
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить ответ (попытка {attempt + 1}): {e}")
+            await asyncio.sleep(2)
+
+    # ПРАВКА 3: команда на робота не должна ронять обработчик
     command = command_data.get("command", "unknown")
-
     if command != "unknown":
-        success = await send_command_to_esp32(command_data)
-        if not success:
-            await message.answer(
-                "⚠️ Я поняла тебя, но не смогла достучаться до дракошки. "
-                "Возможно, он спит или потерял связь с интернетом."
-            )
-    else:
-        logger.info("Неизвестная команда, не отправляем на ESP32")
+        try:
+            await push_cmd(build_cmd(command_data))
+        except Exception as e:
+            print("Не удалось отправить команду роботу:", e)
+
+    if thinking_msg:
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
 
 
 async def main():
-    logger.info("🚀 Запуск бота Drakoshka (Режим: Cloudflare Relay)...")
-    await dp.start_polling(bot)
+    dp.include_router(router)
+    await dp.start_polling(bot, polling_timeout=10)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("🛑 Бот остановлен пользователем")
+    asyncio.run(main())

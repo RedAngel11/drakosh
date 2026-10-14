@@ -3,34 +3,28 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <WiFiManager.h>
 #include <ArduinoJson.h>
 #include "config.h"
 
 class NetworkClient {
 public:
     void begin() {
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        int attempts = 0;
-        // Ждем подключения, но не бесконечно
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            attempts++;
-        }
+        // Captive portal: если нет сохранённой сети - запустит AP "Drakoshka-Setup"
+        // Пользователь подключается телефоном, вводит SSID и пароль
+        WiFiManager wm;
+        wm.setConfigPortalTimeout(180); // 3 минуты на настройку
+        wm.autoConnect("Drakoshka-Setup", "12345678"); // пароль от точки доступа
     }
 
     String pollCommand() {
-        if (WiFi.status() != WL_CONNECTED) {
-            return "none";
-        }
+        if (WiFi.status() != WL_CONNECTED) return "none";
 
-        // Опрашиваем реле не чаще чем раз в 1 секунду
-        if (millis() - _lastPollTime < _pollInterval) {
-            return "none"; 
-        }
+        if (millis() - _lastPollTime < _pollInterval) return "none";
         _lastPollTime = millis();
 
         WiFiClientSecure client;
-        client.setInsecure(); // Игнорируем SSL сертификаты для экономии ресурсов
+        client.setInsecure();
 
         HTTPClient http;
         http.begin(client, RELAY_PULL_URL);
@@ -53,5 +47,5 @@ public:
 
 private:
     unsigned long _lastPollTime = 0;
-    const unsigned long _pollInterval = 1000; // 1 секунда
+    const unsigned long _pollInterval = 1000;
 };

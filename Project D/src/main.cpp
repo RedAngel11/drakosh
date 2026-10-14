@@ -2,7 +2,6 @@
 #include "config.h"
 #include "network_client.h"
 #include "command_handler.h"
-
 #include "engines/light_engine.h"
 #include "engines/audio_engine.h"
 #include "engines/display_engine.h"
@@ -17,50 +16,51 @@ CommandHandler cmdHandler;
 
 int lastButtonReading = HIGH;
 unsigned long lastDebounceTime = 0;
-
 bool isVoiceActive = false;
 unsigned long voiceDebounceTime = 0;
 
 void setup() {
-    // 0. Кнопка
     pinMode(PIN_BUTTON, INPUT_PULLUP);
 
-    // 1. Сеть
-    network.begin();
-
-    // 2. Движки
-    lightEngine.begin(PIN_LED_STRIP, NUM_LEDS);
-    lightEngine.setEmotion(Emotion::CALM, true);
-    
-    audioEngine.begin();
+    // 1. Сначала "оживляем лицо" — чтобы не было чёрного экрана
     displayEngine.begin();
+    displayEngine.showState(EyeState::SLEEP);
+    lightEngine.begin();
+    lightEngine.setEmotion(Emotion::SLEEP, true);
+
+    audioEngine.begin();
     servoEngine.begin();
 
-    // 3. Связываем обработчик команд с движками
+    // 2. Подключение к сети (через captive portal при первом запуске)
+    network.begin();
+
     cmdHandler.setEngines(&lightEngine, &audioEngine, &displayEngine, &servoEngine);
+
+    // 3. Пробуждение
+    if (WiFi.status() == WL_CONNECTED) {
+        displayEngine.showState(EyeState::CALM);
+        lightEngine.setEmotion(Emotion::CALM);
+    }
 }
 
 void loop() {
-    // 1. Сетевой опрос
+    // 1. Опрос реле
     String command = network.pollCommand();
-    if (command != "none") {
-        cmdHandler.execute(command);
-    }
+    if (command != "none") cmdHandler.execute(command);
 
-    // 2. Обработка кнопки BOOT
+    // 2. Кнопка BOOT
     int currentReading = digitalRead(PIN_BUTTON);
-    if (currentReading != lastButtonReading) {
-        lastDebounceTime = millis();
-    }
+    if (currentReading != lastButtonReading) lastDebounceTime = millis();
     if ((millis() - lastDebounceTime) > 50) {
         if (currentReading == LOW && lastButtonReading == HIGH) {
-            audioEngine.playWavFile("/hello.wav"); 
+            audioEngine.playWavFile("/hello.wav");
+            lightEngine.setMouthPink(2000);
             displayEngine.showState(EyeState::HAPPY);
         }
     }
     lastButtonReading = currentReading;
 
-    // 3. Обработка микрофона
+    // 3. Микрофон
     if (audioEngine.checkVoiceActivity()) {
         if (!isVoiceActive) {
             lightEngine.setEmotion(Emotion::VOICE_DETECTED);
@@ -76,9 +76,9 @@ void loop() {
         }
     }
 
-    // 4. Фоновые задачи движков
+    // 4. Обновления (свет, радуга, моргание)
     lightEngine.update();
     displayEngine.update();
-    
+
     delay(10);
 }

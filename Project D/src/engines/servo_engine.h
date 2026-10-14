@@ -1,5 +1,4 @@
 #pragma once
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
@@ -8,58 +7,50 @@
 class ServoEngine {
 public:
     void begin() {
-        Wire.begin(47, 48); // SDA, SCL
-        
+        Wire.begin(47, 48);
         bool i2cFound = false;
-        for (byte address = 1; address < 127; address++) {
-            Wire.beginTransmission(address);
-            if (Wire.endTransmission() == 0 && address == PCA9685_ADDRESS) {
-                i2cFound = true;
-                break;
+        for (byte addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0 && addr == PCA9685_ADDRESS) {
+                i2cFound = true; break;
             }
         }
-
         if (i2cFound) {
             pwm.begin();
             pwm.setOscillatorFrequency(27000000);
-            pwm.setPWMFreq(50); // 50 Гц для сервоприводов
-            
-            // Инициализация всех 5 серв в центральное положение
-            _resetAllServos();
+            pwm.setPWMFreq(50);
+            _resetAll();
         }
     }
 
+    // Новый танец:
+    // Фаза 1: сервы 0..4 по очереди на 180°
+    // Фаза 2: 0 и 4 одновременно возвращаются на 90°
+    // Фаза 3: 1, 2, 3 одновременно возвращаются на 90°
     void dance() {
-        // Танец с 5 сервами - дергаем по 2-3 за раз
-        _moveServos({0, 1}, 300, 400);
-        delay(300);
-        _moveServos({2, 3}, 400, 500);
-        delay(300);
-        _moveServos({4}, 300, 400);
-        delay(300);
-        _moveServos({0, 2, 4}, 400, 500);
-        delay(300);
-        
-        // Возврат в исходное положение
-        _resetAllServos();
+        // Фаза 1: по очереди
+        for (int i = 0; i < 5; i++) {
+            pwm.setPWM(i, 0, SERVO_180);
+            delay(250);
+        }
+        delay(400);
+
+        // Фаза 2: 0 и 4 одновременно на 90°
+        pwm.setPWM(0, 0, SERVO_90);
+        pwm.setPWM(4, 0, SERVO_90);
+        delay(400);
+
+        // Фаза 3: 1, 2, 3 одновременно на 90°
+        pwm.setPWM(1, 0, SERVO_90);
+        pwm.setPWM(2, 0, SERVO_90);
+        pwm.setPWM(3, 0, SERVO_90);
+        delay(400);
+    }
+
+    void _resetAll() {
+        for (int i = 0; i < SERVO_COUNT; i++) pwm.setPWM(i, 0, SERVO_90);
     }
 
 private:
     Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
-    const int SERVO_COUNT = 5; // MVP: только 5 сервоприводов
-
-    void _moveServos(std::initializer_list<int> servos, int minPulse, int maxPulse) {
-        for (int num : servos) {
-            if (num < SERVO_COUNT) { // Защита от выхода за пределы
-                int pulse = random(minPulse, maxPulse);
-                pwm.setPWM(num, 0, pulse);
-            }
-        }
-    }
-
-    void _resetAllServos() {
-        for (int i = 0; i < SERVO_COUNT; i++) {
-            pwm.setPWM(i, 0, 300); // Центральное положение
-        }
-    }
 };

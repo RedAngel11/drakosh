@@ -7,7 +7,7 @@
 class ServoEngine {
 public:
     void begin() {
-        Wire.begin(47, 48);
+        Wire.begin(4, 5);
         bool i2cFound = false;
         for (byte addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
@@ -23,32 +23,54 @@ public:
         }
     }
 
-    // Новый танец:
-    // Фаза 1: сервы 0..4 по очереди на 180°
-    // Фаза 2: 0 и 4 одновременно возвращаются на 90°
-    // Фаза 3: 1, 2, 3 одновременно возвращаются на 90°
+    void test() {
+        int servo20 = SERVO_0 + (SERVO_90 - SERVO_0) * 20 / 90;
+        
+        for (int i = 0; i < 4; i++) {
+            pwm.setPWM(i, 0, servo20);
+            delay(400);
+            pwm.setPWM(i, 0, SERVO_90);
+            delay(400);
+        }
+    }
+
+        // Безопасный танец для 4 сервоприводов (без перегрузки по току)
     void dance() {
-        // Фаза 1: по очереди
-        for (int i = 0; i < 5; i++) {
-            pwm.setPWM(i, 0, SERVO_180);
-            delay(250);
+        // 0. Гарантируем, что все начинаем с нейтрального положения
+        _resetAll();
+        delay(300);
+
+        // 1. Движение "волной" по одному сервоприводу
+        for (int i = 0; i < 4; i++) {
+            pwm.setPWM(i, 0, SERVO_180); // Поворот
+            delay(200);
+            pwm.setPWM(i, 0, SERVO_90);  // Возврат
+            delay(200);
+        }
+        
+        delay(300);
+
+        // 2. Обратная волна
+        for (int i = 3; i >= 0; i--) {
+            pwm.setPWM(i, 0, SERVO_180); 
+            delay(200);
+            pwm.setPWM(i, 0, SERVO_90);  
+            delay(200);
+        }
+
+        // 3. Финальный "поклон" (все немного наклоняются вперед и возвращаются)
+        int bowPos = SERVO_0 + 30; // Чуть больше нуля, но не максимум
+        for (int i = 0; i < 4; i++) {
+            pwm.setPWM(i, 0, bowPos);
         }
         delay(400);
-
-        // Фаза 2: 0 и 4 одновременно на 90°
-        pwm.setPWM(0, 0, SERVO_90);
-        pwm.setPWM(4, 0, SERVO_90);
-        delay(400);
-
-        // Фаза 3: 1, 2, 3 одновременно на 90°
-        pwm.setPWM(1, 0, SERVO_90);
-        pwm.setPWM(2, 0, SERVO_90);
-        pwm.setPWM(3, 0, SERVO_90);
-        delay(400);
+        
+        // 4. Возврат в исходное
+        _resetAll();
     }
 
     void _resetAll() {
-        for (int i = 0; i < SERVO_COUNT; i++) pwm.setPWM(i, 0, SERVO_90);
+        for (int i = 0; i < 4; i++) pwm.setPWM(i, 0, SERVO_90);
     }
 
 private:

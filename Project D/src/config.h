@@ -43,3 +43,7 @@
 #define DISPLAY_RIGHT_CS  9
 #define DISPLAY_DC        8
 #define DISPLAY_RST       7
+
+// ===== ИНДИКАЦИЯ =====
+#define RGB_LED_PIN 48  // Перенесли с 48, чтобы не конфликтовал с I2C
+#define RGB_LED_COUNT 1

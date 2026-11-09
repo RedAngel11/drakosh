@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <LittleFS.h>
@@ -7,28 +8,32 @@
 
 class AudioEngine {
 public:
+    // КОДЫ САМОДИАГНОСТИКИ (показывает лента красными вспышками):
+    // 0 — всё в порядке
+    // 1 — не установился I2S TX (динамик)
+    // 2 — не установился I2S RX (микрофон)
+    // 3 — не смонтировалась LittleFS
+    // 4 — i2s_write вернул ошибку (красный вместо белого в окне тона)
+    int errorCode = 0;
+
     void begin() {
-        setupI2SOutput();
-        setupI2SInput();
-        LittleFS.begin(true);
+        if (setupI2SOutput() != ESP_OK) { errorCode = 1; return; }
+        if (setupI2SInput()  != ESP_OK) { errorCode = 2; return; }
+        if (!LittleFS.begin(true))      { errorCode = 3; }
         _initialized = true;
     }
 
     void playWavFile(const char* path) {
         if (!_initialized) return;
         File file = LittleFS.open(path, "r");
-        if (!file) {
-            // Если файла нет, просто играем короткий тон, чтобы не было тишины
-            playTone(600, 300); 
-            return;
-        }
-        file.seek(44); // Пропускаем WAV заголовок
+        if (!file) { playTone(600, 300); return; }
+        file.seek(44);
         uint8_t buffer[1024];
         size_t bytesRead;
         while (file.available()) {
             bytesRead = file.read(buffer, sizeof(buffer));
             size_t bytesWritten;
-            i2s_write(I2S_NUM_0, buffer, bytesRead, &bytesWritten, portMAX_DELAY);
+            if (i2s_write(I2S_NUM_0, buffer, bytesRead, &bytesWritten, portMAX_DELAY) != ESP_OK) errorCode = 4;
         }
         file.close();
     }
@@ -37,33 +42,35 @@ public:
         if (!_initialized) return;
         const int sample_rate = 16000;
         const int samples_count = (sample_rate * duration_ms) / 1000;
-        int16_t buffer[samples_count];
-        for (int i = 0; i < samples_count; i++) {
-            buffer[i] = (int16_t)(0.5 * 32767 * sin(2 * PI * frequency_Hz * i / sample_rate));
+        const int CHUNK = 512;
+        int16_t buffer[CHUNK];
+        int generated = 0;
+        while (generated < samples_count) {
+            int n = min(CHUNK, samples_count - generated);
+            for (int i = 0; i < n; i++) {
+                buffer[i] = (int16_t)(0.5 * 32767 * sin(2 * PI * frequency_Hz * (generated + i) / sample_rate));
+            }
+            size_t written;
+            if (i2s_write(I2S_NUM_0, buffer, n * sizeof(int16_t), &written, portMAX_DELAY) != ESP_OK) errorCode = 4;
+            generated += n;
         }
-        size_t bytes_written;
-        i2s_write(I2S_NUM_0, buffer, sizeof(buffer), &bytes_written, portMAX_DELAY);
     }
 
     bool checkVoiceActivity() {
-        if (!_initialized) return false;
+        if (!_initialized || errorCode) return false;
         int16_t samples[256];
         size_t bytesRead;
         i2s_read(I2S_NUM_1, samples, sizeof(samples), &bytesRead, portMAX_DELAY);
-        
         long sum = 0;
         int count = bytesRead / 2;
-        for (int i = 0; i < count; i++) {
-            sum += (long)samples[i] * samples[i];
-        }
-        long rms = sqrt(sum / count);
-        return (rms > VOICE_THRESHOLD);
+        for (int i = 0; i < count; i++) sum += (long)samples[i] * samples[i];
+        return (sqrt(sum / max(1, count)) > VOICE_THRESHOLD);
     }
 
 private:
     bool _initialized = false;
-    
-    void setupI2SOutput() {
+
+    esp_err_t setupI2SOutput() {
         i2s_config_t i2s_config = {
             .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
             .sample_rate = 16000,
@@ -82,11 +89,12 @@ private:
             .data_out_num = I2S_OUT_DATA,
             .data_in_num = I2S_PIN_NO_CHANGE
         };
-        i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-        i2s_set_pin(I2S_NUM_0, &pin_config);
+        esp_err_t e = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+        if (e != ESP_OK) return e;
+        return i2s_set_pin(I2S_NUM_0, &pin_config);
     }
-    
-    void setupI2SInput() {
+
+    esp_err_t setupI2SInput() {
         i2s_config_t i2s_config = {
             .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
             .sample_rate = 16000,
@@ -105,7 +113,8 @@ private:
             .data_out_num = I2S_PIN_NO_CHANGE,
             .data_in_num = I2S_IN_DATA
         };
-        i2s_driver_install(I2S_NUM_1, &i2s_config, 0, NULL);
-        i2s_set_pin(I2S_NUM_1, &pin_config);
+        esp_err_t e = i2s_driver_install(I2S_NUM_1, &i2s_config, 0, NULL);
+        if (e != ESP_OK) return e;
+        return i2s_set_pin(I2S_NUM_1, &pin_config);
     }
 };

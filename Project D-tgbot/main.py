@@ -88,7 +88,10 @@ async def cmd_start(message: types.Message):
 @dp.message(Command("deadlines"))
 async def show_deadlines(message: types.Message):
     await message.answer(deadlines_text(message.chat.id))
-
+@dp.message(Command("dance"))
+async def cmd_dance(message: types.Message):
+    await message.answer("🕺 Дракоша начинает танцевать!")
+    await push_cmd("dance")
 @dp.message()
 async def handle_user_message(message: types.Message):
     user_text = message.text.strip()

@@ -1,51 +1,56 @@
 #pragma once
-
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
 #include "config.h"
-
 class NetworkClient {
 public:
-    void begin() {
-        // Captive portal: если нет сохранённой сети - запустит AP "Drakoshka-Setup"
-        // Пользователь подключается телефоном, вводит SSID и пароль
-        WiFiManager wm;
-        wm.setConfigPortalTimeout(180); // 3 минуты на настройку
-        wm.autoConnect("Drakoshka-Setup", "12345678"); // пароль от точки доступа
+  bool begin() {
+    WiFi.mode(WIFI_STA);
+    WiFi.persistent(false);
+    WiFi.setSleep(false);
+#if defined(WIFI_SSID) && defined(WIFI_PASS)
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    uint32_t t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 12000) delay(200);
+#endif
+#if USE_WIFI_MANAGER
+    if (WiFi.status() != WL_CONNECTED) {
+      WiFiManager wm;
+      wm.setConfigPortalTimeout(120);
+      wm.setConnectTimeout(15);
+      wm.autoConnect("Drakoshka-Setup", "12345678");
     }
+#endif
+    return WiFi.status() == WL_CONNECTED;
+  }
 
-    String pollCommand() {
-        if (WiFi.status() != WL_CONNECTED) return "none";
+  bool connected() { return WiFi.status() == WL_CONNECTED; }
 
-        if (millis() - _lastPollTime < _pollInterval) return "none";
-        _lastPollTime = millis();
+  String pollCommand() {
+    if (!connected()) return "none";
+    if (millis() - _lastPoll < POLL_INTERVAL_MS) return "none";
+    _lastPoll = millis();
 
-        WiFiClientSecure client;
-        client.setInsecure();
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.begin(client, RELAY_PULL_URL);
+    http.setTimeout(2500);
+    http.setReuse(false);
 
-        HTTPClient http;
-        http.begin(client, RELAY_PULL_URL);
-        http.setTimeout(3000);
-
-        int httpCode = http.GET();
-        String command = "none";
-
-        if (httpCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-            JsonDocument doc;
-            if (!deserializeJson(doc, payload)) {
-                command = doc["cmd"].as<String>();
-            }
-        }
-
-        http.end();
-        return command;
+    String command = "none";
+    if (http.GET() == HTTP_CODE_OK) {
+      String payload = http.getString();
+      JsonDocument doc;
+      if (!deserializeJson(doc, payload)) command = doc["cmd"].as<String>();
     }
+    http.end();
+    return command;
+  }
 
 private:
-    unsigned long _lastPollTime = 0;
-    const unsigned long _pollInterval = 1000;
+  uint32_t _lastPoll = 0;
 };
